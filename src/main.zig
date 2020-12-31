@@ -53,31 +53,28 @@ const Omino = struct {
         allocator.free(self.points);
     }
 
-    pub fn toStr(self: Self) ![]const u8 {
-        // TODO: Should use 'std.fmt' or 'std.mem'?
-        var bufLen: u8 = self.size * (self.size + 1) - 1;
-        var buf: []u8 = try allocator.alloc(u8, bufLen);
-        var x: u8 = 0;
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        var x: u8 = undefined;
         var y: u8 = self.size - 1;
-        var idx: u8 = 0;
 
         while (true) {
             x = 0;
             while (x < self.size) {
-                buf[idx] = if (self.hasPoint(x, y)) '#' else '.';
-                idx += 1;
+                try writer.writeByte(if (self.hasPoint(x, y)) '#' else '.');
                 x += 1;
             }
             if (y > 0) {
-                buf[idx] = '\n';
-                idx += 1;
+                try writer.writeByte('\n');
                 y -= 1;
             } else {
                 break;
             }
         }
-
-        return buf;
     }
 
     pub fn eql(self: Self, other: Self) bool {
@@ -131,23 +128,23 @@ const Omino = struct {
         for (self.points) |p, i| {
             self.points[i] = Point{ .x = self.size - p.y - 1, .y = p.x };
         }
-        log.debug("Rotated:\n{s}\n", .{self.toStr()});
+        log.debug("Rotated:\n{}\n", .{self});
         self.moveToCorner();
+        log.debug("Cornered:\n{}\n", .{self});
     }
 
     fn transpose(self: Self) void {
         for (self.points) |p, i| {
             self.points[i] = Point{ .x = p.y, .y = p.x };
         }
-        log.debug("Transposed:\n{s}\n", .{self.toStr()});
+        log.debug("Transposed:\n{}\n", .{self});
     }
 
     fn canonicalise(self: Self) !void {
         // @@@ Check joined.
-
-        log.debug("Initial:\n{s}\n", .{self.toStr()});
+        log.debug("Initial:\n{}\n", .{self});
         self.moveToCorner();
-        log.debug("Cornered:\n{s}\n", .{self.toStr()});
+        log.debug("Cornered:\n{}\n", .{self});
 
         var points = try allocator.alloc(Point, self.size);
         defer allocator.free(points);
@@ -211,7 +208,7 @@ test "omino creation" {
     // Success.
     std.testing.expectEqual(@as(u8, 3), omino.size);
     // @@@ Depends on the order, which is not currently well-defined.
-    std.testing.expectEqualSlices(Point, omino.points, &[_]Point{Point.init(2, 0), Point.init(0, 0), Point.init(0, 1)});
+    std.testing.expectEqualSlices(Point, omino.points, &[_]Point{ Point.init(2, 0), Point.init(0, 0), Point.init(0, 1) });
 
     // Errors.
     std.testing.expectError(error.InvalidSize, Omino.init(0, &[_]Point{}));
@@ -263,14 +260,11 @@ fn createOmino() !Omino {
 
 /// Main.
 pub fn main() !void {
-    log.debug("Running...\n", .{});
+    log.debug("Running...", .{});
 
     var omino = try createOmino();
     defer omino.deinit();
-    log.debug("{}\n", .{omino});
-    var omino_str = try omino.toStr();
-    std.debug.print("Omino:\n{s}\n", .{omino_str});
-    allocator.free(omino_str); // @@@ Does this guarantee all the memory was freed?
+    std.debug.print("Omino:\n{}\n\n", .{omino});
 
-    log.debug("Finished\n", .{});
+    log.debug("Finished", .{});
 }
