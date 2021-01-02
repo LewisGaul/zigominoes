@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 /// The chosen allocator for this project.
 const allocator = std.heap.page_allocator;
 const log = std.log.scoped(.main);
-const log_level = .debug;
+const log_level = .info;
 
 /// The 'point' struct.
 const Point = struct {
@@ -26,6 +26,8 @@ const Point = struct {
 
 /// A struct representing an unordered set of unique points.
 const PointSet = struct {
+    // @@@ Not actually behaving like a set!
+
     // @@@ Not sure whether an array hashmap is a good choice or not.
     // Implicitly not storing the hash, allowing direct mutations.
     hashMap: std.AutoArrayHashMap(Point, void),
@@ -197,6 +199,35 @@ const Omino = struct {
         return self.points.eql(other.points);
     }
 
+    pub fn getFreeNeighbours(self: Self) !PointSet {
+        var nbrs = PointSet.init();
+        var newPts: []Point = undefined;
+        var iterator = self.points.iterator();
+        while (iterator.next()) |p| {
+            newPts = &[_]Point{
+                Point.init(p.x + 1, p.y),
+                Point.init(p.x, p.y + 1),
+            };
+            for (newPts) |newPt| {
+                if (!self.points.contains(newPt)) {
+                    try nbrs.put(newPt);
+                }
+            }
+        }
+        return nbrs;
+    }
+
+    pub fn cloneAddPoint(self: Self, point: Point) !Self {
+        var points = std.ArrayList(Point).init(allocator);
+        defer points.deinit();
+        var iterator = self.points.iterator();
+        while (iterator.next()) |p| {
+            try points.append(p.*);
+        }
+        try points.append(point);
+        return Self.init(self.size + 1, points.items);
+    }
+
     // Internal functions
 
     fn checkJoined(self: Self) !void {
@@ -334,6 +365,37 @@ test "omino equality" {
     std.testing.expect(!omino1.eql(omino4));
 }
 
+const OminoSet = struct {
+    ominoSize: u5,
+    hashMap: std.AutoHashMap(Omino, void),
+
+    const Self = @This();
+
+    pub fn init(ominoSize: u5) Self {
+        return Self{ 
+            .ominoSize = ominoSize,
+            .hashMap = std.AutoHashMap(Omino, void).init(allocator),
+        };
+    }
+
+    pub fn put(self: *Self, omino: Omino) !void {
+        try self.hashMap.put(omino, {});
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try writer.print("Set of {d} {d}-ominoes:\n", .{self.hashMap.count(), self.ominoSize});
+        var iterator = self.hashMap.iterator();
+        while (iterator.next()) |entry| {
+            try writer.print("{}\n", .{entry.key});
+        }
+    }
+};
+
 /// Function to create a dummy omino.
 /// Returned omino should be freed by the caller.
 fn createOmino() !Omino {
@@ -359,7 +421,14 @@ pub fn main() !void {
 
     var omino = try createOmino();
     defer omino.deinit();
+
+    var ominoSet = OminoSet.init(omino.size + 1);
+    var iterator = (try omino.getFreeNeighbours()).iterator();
+    while (iterator.next()) |p| {
+        try ominoSet.put(try omino.cloneAddPoint(p.*));
+    }
     std.debug.print("Omino:\n{}\n\n", .{omino});
+    std.debug.print("{}\n", .{ominoSet});
 
     try testing();
 
