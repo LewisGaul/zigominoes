@@ -18,10 +18,65 @@ const Point = struct {
     }
 };
 
+/// A struct representing a hashset of points.
+const PointSet = struct {
+    hashMap: std.AutoArrayHashMap(Point, void),
+
+    const Self = @This();
+
+    pub fn init() Self {
+        return Self{ .hashMap = std.AutoArrayHashMap(Point, void).init(allocator) };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.hashMap.deinit();
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        for (self.hashMap.items()) |entry| {
+            try writer.print("{}\n", .{entry.key});
+        }
+    }
+
+    pub fn put(self: *Self, point: Point) !void {
+        try self.hashMap.put(point, {});
+    }
+
+    pub fn contains(self: Self, point: Point) bool {
+        return self.hashMap.contains(point);
+    }
+
+    pub fn items(self: Self) ![]Point {
+        // @@@ Shouldn't need to allocate memory?
+        var list = std.ArrayList(Point).init(allocator);
+        for (self.hashMap.items()) |entry| {
+            try list.append(entry.key);
+        }
+        return (list.items);
+    }
+
+    pub fn sort(self: *Self) void {
+        const Entry = @TypeOf(self.hashMap.unmanaged).Entry;
+        const inner = struct {
+            pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
+                if (lhs.key.x == rhs.key.x) return (lhs.key.y < rhs.key.y);
+                return (lhs.key.x < rhs.key.x);
+            }
+        };
+        std.sort.sort(Entry, self.hashMap.items(), {}, inner.lessThan);
+    }
+};
+
 /// The 'omino' struct.
 const Omino = struct {
     size: u5,
     points: []Point,
+    points2: PointSet,
 
     const Self = @This();
 
@@ -32,6 +87,7 @@ const Omino = struct {
         var self = Self{
             .size = size,
             .points = try allocator.alloc(Point, size),
+            .points2 = PointSet.init(),
         };
         // Note: list of points could be 'invalid' in the following ways:
         //  1. Duplicate points
@@ -41,9 +97,10 @@ const Omino = struct {
         //  3. Points not be within the '<size>x<size>' grid
         //       Doesn't matter - fixed in canonicalisation.
         for (points) |p, i| {
-            if (self.hasPoint(p.x, p.y)) return error.DuplicatePoint;
+            if (self.points2.contains(p)) return error.DuplicatePoint;
             // This does an implicit copy (@@@ docs reference?).
             self.points[i] = p;
+            try self.points2.put(p);
         }
         try self.canonicalise();
         return self;
@@ -65,7 +122,11 @@ const Omino = struct {
         while (true) {
             x = 0;
             while (x < self.size) {
-                try writer.writeByte(if (self.hasPoint(x, y)) '#' else '.');
+                if (self.points2.contains(Point.init(x, y))) {
+                    try writer.writeByte('#');
+                } else {
+                    try writer.writeByte('.');
+                }
                 x += 1;
             }
             if (y > 0) {
@@ -78,22 +139,14 @@ const Omino = struct {
     }
 
     pub fn eql(self: Self, other: Self) bool {
-        // Note: can't use std.meta.eql() since it compares slices by pointer.
         if (self.size != other.size) return false;
-        for (self.points) |p, i| {
-            if (!std.meta.eql(p, other.points[i])) return false;
+        for (self.points2.items()) |p, i| {
+            if (!std.meta.eql(p, other.points2.items()[i])) return false;
         }
         return true;
     }
 
     // Internal functions
-
-    fn hasPoint(self: Self, x: u8, y: u8) bool {
-        for (self.points) |*p| {
-            if (p.x == x and p.y == y) return true;
-        }
-        return false;
-    }
 
     fn moveToCorner(self: Self) void {
         var min_x: u8 = std.math.maxInt(u8);
@@ -106,21 +159,6 @@ const Omino = struct {
         for (self.points) |*p| {
             p.x -= min_x;
             p.y -= min_y;
-        }
-    }
-
-    fn signatureValue(self: Self) u256 {
-        // @@@ In theory this could overflow for size > 8...
-        var result: u256 = 0;
-        for (self.points) |p| {
-            result += @as(u256, 1) << (p.x + p.y * self.size);
-        }
-        return result;
-    }
-
-    fn savePoints(self: Self, points: []Point) void {
-        for (self.points) |p, i| {
-            points[i] = p;
         }
     }
 
@@ -146,52 +184,20 @@ const Omino = struct {
         self.moveToCorner();
         log.debug("Cornered:\n{}\n", .{self});
 
-        var points = try allocator.alloc(Point, self.size);
-        defer allocator.free(points);
-        var signature: u256 = self.signatureValue();
-        self.savePoints(points);
-
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.transpose();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
+        // @@@ check
         self.rotate();
-        if (self.signatureValue() < signature) {
-            signature = self.signatureValue();
-            self.savePoints(points);
-        }
-
-        // @@@ This would be more efficient:
-        // var points = pointsFromSignature(signature);
-        for (points) |p, i| {
-            self.points[i] = p;
-        }
+        // @@@ check
     }
 };
 
@@ -258,6 +264,11 @@ fn createOmino() !Omino {
     return omino;
 }
 
+/// Do some testing of Zig functionality!
+fn testing() !void {
+    log.debug("Doing some Zig testing...", .{});
+}
+
 /// Main.
 pub fn main() !void {
     log.debug("Running...", .{});
@@ -265,6 +276,8 @@ pub fn main() !void {
     var omino = try createOmino();
     defer omino.deinit();
     std.debug.print("Omino:\n{}\n\n", .{omino});
+
+    // try testing();
 
     log.debug("Finished", .{});
 }
