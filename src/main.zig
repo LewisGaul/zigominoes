@@ -22,20 +22,28 @@ const Point = struct {
         if (self.x != other.x) return self.x < other.x;
         return false; // Equal
     }
+
+    pub fn eql(self: Self, other: Self) bool {
+        return self.x == other.x and self.y == other.y;
+    }
+
+    pub fn hash(self: Self) u32 {
+        // @@@ Not sure this is suitable...
+        return std.array_hash_map.getAutoHashFn(Self)(self);
+    }
 };
 
 /// A struct representing an unordered set of unique points.
 const PointSet = struct {
-    // @@@ Not actually behaving like a set!
-
     // @@@ Not sure whether an array hashmap is a good choice or not.
-    // Implicitly not storing the hash, allowing direct mutations.
-    hashMap: std.AutoArrayHashMap(Point, void),
+    hashMap: HashMap,
 
     const Self = @This();
 
+    // Not storing the hash to allow direct mutations without needing to reindex.
+    const HashMap = std.ArrayHashMap(Point, void, Point.hash, Point.eql, false);
     const Iterator = struct {
-        hmIt: std.AutoArrayHashMap(Point, void).Iterator,
+        hmIt: HashMap.Iterator,
 
         pub fn next(it: *Iterator) ?*Point {
             var entry = it.hmIt.next() orelse return null;
@@ -48,7 +56,7 @@ const PointSet = struct {
     };
 
     pub fn init() Self {
-        return Self{ .hashMap = std.AutoArrayHashMap(Point, void).init(allocator) };
+        return Self{ .hashMap = HashMap.init(allocator) };
     }
 
     pub fn deinit(self: *Self) void {
@@ -200,6 +208,14 @@ const Omino = struct {
     pub fn eql(self: Self, other: Self) bool {
         if (self.size != other.size) return false;
         return self.points.eql(other.points);
+    }
+
+    pub fn hash(self: Self) u64 {
+        std.debug.assert(@as(u16, self.size) * (@as(u16, self.size) + 1) <= 512);
+        var buffer = [_]u8{0} ** 512;
+        var writer = std.io.fixedBufferStream(&buffer).writer();
+        writer.print("{}", .{self}) catch unreachable;
+        return std.hash_map.hashString(&buffer);
     }
 
     pub fn lessThan(self: *Self, other: *Self) bool {
@@ -389,12 +405,19 @@ test "omino equality" {
 /// A struct representing a set of unique ominoes.
 const OminoSet = struct {
     ominoSize: u5,
-    hashMap: std.AutoHashMap(Omino, void),
+    hashMap: HashMap,
 
     const Self = @This();
 
+    const HashMap = std.HashMap(
+        Omino,
+        void,
+        Omino.hash,
+        Omino.eql,
+        std.hash_map.DefaultMaxLoadPercentage,
+    );
     const Iterator = struct {
-        hmIt: std.AutoHashMap(Omino, void).Iterator,
+        hmIt: HashMap.Iterator,
 
         pub fn next(it: *Iterator) ?*Omino {
             var entry = it.hmIt.next() orelse return null;
@@ -405,7 +428,7 @@ const OminoSet = struct {
     pub fn init(ominoSize: u5) Self {
         return Self{
             .ominoSize = ominoSize,
-            .hashMap = std.AutoHashMap(Omino, void).init(allocator),
+            .hashMap = HashMap.init(allocator),
         };
     }
 
@@ -427,6 +450,14 @@ const OminoSet = struct {
         }
     }
 
+    pub fn contains(self: Self, omino: Omino) bool {
+        return self.hashMap.contains(omino);
+    }
+
+    pub fn count(self: Self) u64 {
+        return self.hashMap.count();
+    }
+
     pub fn put(self: *Self, omino: Omino) !void {
         try self.hashMap.put(omino, {});
     }
@@ -443,24 +474,12 @@ const OminoSet = struct {
     }
 };
 
+/// The initial set of ominoes.
 fn initialOminoSet() !OminoSet {
     var oneOmino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
     var ominoSet = OminoSet.init(1);
     try ominoSet.put(oneOmino);
     return ominoSet;
-}
-
-/// Function to create an example omino.
-/// Returned omino should be freed by the caller with 'omino.deinit()'.
-fn createOmino() !Omino {
-    var points = [_]Point{
-        Point.init(2, 2),
-        Point.init(3, 1),
-        Point.init(3, 3),
-        Point.init(3, 2),
-    };
-    var omino = try Omino.init(4, &points);
-    return omino;
 }
 
 /// Do some testing of Zig functionality!
@@ -478,13 +497,17 @@ pub fn main() !void {
     var omIterator: @TypeOf(prevSet).Iterator = undefined;
 
     std.debug.print("{}", .{prevSet});
-    while (size < 3) : (size += 1) {
+    while (size < std.math.maxInt(u5)) : (size += 1) {
         omIterator = prevSet.iterator();
         nextSet = OminoSet.init(size + 1);
         while (omIterator.next()) |om| {
             try nextSet.addByOminoGrowth(om);
         }
-        std.debug.print("{}", .{nextSet});
+        if (size <= 5) {
+            std.debug.print("{}", .{nextSet});
+        } else {
+            std.debug.print("Found {d} {d}-ominoes\n", .{ nextSet.count(), nextSet.ominoSize });
+        }
         prevSet.deinit();
         prevSet = nextSet;
         nextSet = undefined;
