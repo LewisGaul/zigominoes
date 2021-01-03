@@ -5,7 +5,7 @@ const allocator: *std.mem.Allocator = std.testing.allocator;
 const log = std.log.scoped(.main);
 pub const log_level = .debug;
 
-/// The 'point' struct.
+/// A struct representing an (x, y) coordinate in the positive quadrant.
 const Point = struct {
     x: u8,
     y: u8,
@@ -137,7 +137,14 @@ const PointSet = struct {
     }
 };
 
-/// The 'omino' struct.
+/// A struct representing a single 'omino'.
+///
+/// An omino has a size and a set of points that correspond to squares.
+/// Examples:
+///  - Dominoes (2-ominoes): There is only one of these, two squares joined
+///  - Tetrominoes (4-ominoes): Tetris blocks
+///  - The board game 'Blokus' has all ominoes up to size 5
+///  - The single 1-omino is just a single square
 const Omino = struct {
     size: u5,
     points: PointSet,
@@ -485,7 +492,7 @@ const OminoSet = struct {
     }
 };
 
-/// The initial set of ominoes.
+/// The initial seed set of ominoes.
 fn initialOminoSet() !OminoSet {
     var oneOmino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
     var ominoSet = OminoSet.init(1);
