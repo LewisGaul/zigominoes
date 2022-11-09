@@ -16,13 +16,34 @@ const Point = struct {
     pub fn init(x: u8, y: u8) Self {
         return Self{ .x = x, .y = y };
     }
+
+    pub fn lessThan(self: Self, other: Self) bool {
+        if (self.x != other.x) return self.x < other.x;
+        if (self.y != other.y) return self.y < other.y;
+        return false; // Equal
+    }
 };
 
-/// A struct representing a hashset of points.
+/// A struct representing an unordered set of unique points.
 const PointSet = struct {
+    // @@@ Not sure whether an array hashmap is a good choice or not.
+    // Implicitly not storing the hash, allowing direct mutations.
     hashMap: std.AutoArrayHashMap(Point, void),
 
     const Self = @This();
+
+    const Iterator = struct {
+        hmIt: std.AutoArrayHashMap(Point, void).Iterator,
+
+        pub fn next(it: *Iterator) ?*Point {
+            var entry = it.hmIt.next() orelse return null;
+            return &entry.key;
+        }
+
+        pub fn reset(it: *Iterator) void {
+            it.hmIt.reset();
+        }
+    };
 
     pub fn init() Self {
         return Self{ .hashMap = std.AutoArrayHashMap(Point, void).init(allocator) };
@@ -38,8 +59,21 @@ const PointSet = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        for (self.hashMap.items()) |entry| {
-            try writer.print("{}\n", .{entry.key});
+        var entries = self.hashMap.items();
+        var point: Point = undefined;
+
+        try writer.writeAll(@typeName(Self));
+        if (self.hashMap.count() == 0) {
+            try writer.writeAll("{}");
+            return;
+        } else {
+            try writer.writeAll("{ ");
+            for (entries[0 .. entries.len - 1]) |entry| {
+                point = entry.key;
+                try writer.print("({}, {}), ", .{ point.x, point.y });
+            }
+            point = entries[entries.len - 1].key;
+            try writer.print("({}, {}) }}", .{ point.x, point.y });
         }
     }
 
@@ -47,25 +81,48 @@ const PointSet = struct {
         try self.hashMap.put(point, {});
     }
 
+    pub fn count(self: Self) usize {
+        return self.hashMap.count();
+    }
+
     pub fn contains(self: Self, point: Point) bool {
         return self.hashMap.contains(point);
     }
 
-    pub fn items(self: Self) ![]Point {
-        // @@@ Shouldn't need to allocate memory?
-        var list = std.ArrayList(Point).init(allocator);
+    pub fn eql(self: Self, other: Self) bool {
+        if (self.count() != other.count()) return false;
         for (self.hashMap.items()) |entry| {
-            try list.append(entry.key);
+            if (!other.contains(entry.key)) return false;
         }
-        return (list.items);
+        return true;
     }
 
-    pub fn sort(self: *Self) void {
-        const Entry = @TypeOf(self.hashMap.unmanaged).Entry;
+    pub fn clone(self: Self) !Self {
+        return Self{ .hashMap = try self.hashMap.clone() };
+    }
+
+    pub fn lessThan(self: *Self, other: *Self) bool {
+        if (self.count() != other.count()) return self.count() < other.count();
+
+        self.sort();
+        other.sort();
+
+        for (self.hashMap.items()) |entry, i| {
+            if (std.meta.eql(entry.key, other.hashMap.items()[i].key)) continue;
+            return entry.key.lessThan(other.hashMap.items()[i].key);
+        }
+        return false;
+    }
+
+    pub fn iterator(self: *const Self) Iterator {
+        return Iterator{ .hmIt = self.hashMap.iterator() };
+    }
+
+    fn sort(self: *Self) void {
+        const Entry = @TypeOf(self.hashMap).Entry;
         const inner = struct {
             pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
-                if (lhs.key.x == rhs.key.x) return (lhs.key.y < rhs.key.y);
-                return (lhs.key.x < rhs.key.x);
+                return lhs.key.lessThan(rhs.key);
             }
         };
         std.sort.sort(Entry, self.hashMap.items(), {}, inner.lessThan);
@@ -75,8 +132,7 @@ const PointSet = struct {
 /// The 'omino' struct.
 const Omino = struct {
     size: u5,
-    points: []Point,
-    points2: PointSet,
+    points: PointSet,
 
     const Self = @This();
 
@@ -86,28 +142,26 @@ const Omino = struct {
 
         var self = Self{
             .size = size,
-            .points = try allocator.alloc(Point, size),
-            .points2 = PointSet.init(),
+            .points = PointSet.init(),
         };
         // Note: list of points could be 'invalid' in the following ways:
         //  1. Duplicate points
         //       Handled immediately.
         //  2. Points not be joined up
-        //       Caught in canonicalisation.
+        //       Checked explicitly.
         //  3. Points not be within the '<size>x<size>' grid
         //       Doesn't matter - fixed in canonicalisation.
         for (points) |p, i| {
-            if (self.points2.contains(p)) return error.DuplicatePoint;
-            // This does an implicit copy (@@@ docs reference?).
-            self.points[i] = p;
-            try self.points2.put(p);
+            if (self.points.contains(p)) return error.DuplicatePoint;
+            try self.points.put(p);
         }
+        try self.checkJoined();
         try self.canonicalise();
         return self;
     }
 
-    pub fn deinit(self: Self) void {
-        allocator.free(self.points);
+    pub fn deinit(self: *Self) void {
+        self.points.deinit();
     }
 
     pub fn format(
@@ -122,7 +176,7 @@ const Omino = struct {
         while (true) {
             x = 0;
             while (x < self.size) {
-                if (self.points2.contains(Point.init(x, y))) {
+                if (self.points.contains(Point.init(x, y))) {
                     try writer.writeByte('#');
                 } else {
                     try writer.writeByte('.');
@@ -140,64 +194,96 @@ const Omino = struct {
 
     pub fn eql(self: Self, other: Self) bool {
         if (self.size != other.size) return false;
-        for (self.points2.items()) |p, i| {
-            if (!std.meta.eql(p, other.points2.items()[i])) return false;
-        }
-        return true;
+        return self.points.eql(other.points);
     }
 
     // Internal functions
 
-    fn moveToCorner(self: Self) void {
+    fn checkJoined(self: Self) !void {
+        // @@@ Implement.
+    }
+
+    fn moveToCorner(self: *Self) void {
         var min_x: u8 = std.math.maxInt(u8);
         var min_y: u8 = std.math.maxInt(u8);
 
-        for (self.points) |p| {
+        var iterator = self.points.iterator();
+        while (iterator.next()) |p| {
             min_x = std.math.min(min_x, p.x);
             min_y = std.math.min(min_y, p.y);
         }
-        for (self.points) |*p| {
+        iterator.reset();
+        while (iterator.next()) |p| {
             p.x -= min_x;
             p.y -= min_y;
         }
     }
 
-    fn rotate(self: Self) void {
-        for (self.points) |p, i| {
-            self.points[i] = Point{ .x = self.size - p.y - 1, .y = p.x };
+    fn rotate(self: *Self) void {
+        var iterator = self.points.iterator();
+        var newPoint: Point = undefined;
+        while (iterator.next()) |p| {
+            newPoint = Point{ .x = self.size - p.y - 1, .y = p.x };
+            p.* = newPoint;
         }
-        log.debug("Rotated:\n{}\n", .{self});
+        // log.debug("Rotated:\n{}\n", .{self});
         self.moveToCorner();
-        log.debug("Cornered:\n{}\n", .{self});
+        // log.debug("Cornered:\n{}\n", .{self});
+        log.debug("Rotated:\n{}\n", .{self});
     }
 
-    fn transpose(self: Self) void {
-        for (self.points) |p, i| {
-            self.points[i] = Point{ .x = p.y, .y = p.x };
+    fn transpose(self: *Self) void {
+        var iterator = self.points.iterator();
+        var newPoint: Point = undefined;
+        while (iterator.next()) |p| {
+            newPoint = Point{ .x = p.y, .y = p.x };
+            p.* = newPoint;
         }
         log.debug("Transposed:\n{}\n", .{self});
     }
 
-    fn canonicalise(self: Self) !void {
-        // @@@ Check joined.
+    fn canonicalise(self: *Self) !void {
+        var minPoints: PointSet = try self.points.clone();
+
+        const inner = struct {
+            pub fn checkPoints(curPts: *PointSet, minPts: *PointSet) void {
+                if (curPts.lessThan(minPts)) {
+                    storePoints(curPts, minPts);
+                }
+            }
+
+            pub fn storePoints(fromPts: *PointSet, toPts: *PointSet) void {
+                var fromIt = fromPts.iterator();
+                var toIt = toPts.iterator();
+                var toPt = toIt.next();
+                while (fromIt.next()) |fromPt| : (toPt = toIt.next()) {
+                    toPt.?.* = fromPt.*;
+                }
+            }
+        };
+
         log.debug("Initial:\n{}\n", .{self});
         self.moveToCorner();
         log.debug("Cornered:\n{}\n", .{self});
 
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.transpose();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
         self.rotate();
-        // @@@ check
+        inner.checkPoints(&self.points, &minPoints);
+
+        log.debug("Canonical points: {}", .{minPoints});
+        self.points.deinit();
+        self.points = minPoints;
     }
 };
 
@@ -213,8 +299,6 @@ test "omino creation" {
 
     // Success.
     std.testing.expectEqual(@as(u8, 3), omino.size);
-    // @@@ Depends on the order, which is not currently well-defined.
-    std.testing.expectEqualSlices(Point, omino.points, &[_]Point{ Point.init(2, 0), Point.init(0, 0), Point.init(0, 1) });
 
     // Errors.
     std.testing.expectError(error.InvalidSize, Omino.init(0, &[_]Point{}));
@@ -277,7 +361,7 @@ pub fn main() !void {
     defer omino.deinit();
     std.debug.print("Omino:\n{}\n\n", .{omino});
 
-    // try testing();
+    try testing();
 
     log.debug("Finished", .{});
 }
