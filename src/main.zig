@@ -492,18 +492,17 @@ pub fn main() !void {
     log.debug("Running...", .{});
 
     var prevSet = try initialOminoSet();
-    var size: u5 = prevSet.ominoSize;
     var nextSet: @TypeOf(prevSet) = undefined;
     var omIterator: @TypeOf(prevSet).Iterator = undefined;
 
     std.debug.print("{}", .{prevSet});
-    while (size < std.math.maxInt(u5)) : (size += 1) {
+    while (prevSet.ominoSize < std.math.maxInt(u5)) {
+        nextSet = OminoSet.init(prevSet.ominoSize + 1);
         omIterator = prevSet.iterator();
-        nextSet = OminoSet.init(size + 1);
         while (omIterator.next()) |om| {
             try nextSet.addByOminoGrowth(om);
         }
-        if (size <= 5) {
+        if (nextSet.ominoSize <= 5) {
             std.debug.print("{}", .{nextSet});
         } else {
             std.debug.print("Found {d} {d}-ominoes\n", .{ nextSet.count(), nextSet.ominoSize });
