@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 
 /// The chosen allocator for this project.
 const allocator = std.heap.page_allocator;
+const log = std.log.scoped(.main);
+const log_level = .debug;
 
 /// The 'point' struct.
 const Point = struct {
@@ -129,7 +131,7 @@ const Omino = struct {
         for (self.points) |p, i| {
             self.points[i] = Point{ .x = self.size - p.y - 1, .y = p.x };
         }
-        // std.debug.warn("Rotated:\n{s}\n", .{self.toStr()});
+        log.debug("Rotated:\n{s}\n", .{self.toStr()});
         self.moveToCorner();
     }
 
@@ -137,15 +139,15 @@ const Omino = struct {
         for (self.points) |p, i| {
             self.points[i] = Point{ .x = p.y, .y = p.x };
         }
-        // std.debug.warn("Transposed:\n{s}\n", .{self.toStr()});
+        log.debug("Transposed:\n{s}\n", .{self.toStr()});
     }
 
     fn canonicalise(self: Self) !void {
         // @@@ Check joined.
 
-        // std.debug.warn("Initial:\n{s}\n", .{self.toStr()});
+        log.debug("Initial:\n{s}\n", .{self.toStr()});
         self.moveToCorner();
-        // std.debug.warn("Cornered:\n{s}\n", .{self.toStr()});
+        log.debug("Cornered:\n{s}\n", .{self.toStr()});
 
         var points = try allocator.alloc(Point, self.size);
         defer allocator.free(points);
@@ -261,14 +263,14 @@ fn createOmino() !Omino {
 
 /// Main.
 pub fn main() !void {
-    std.debug.warn("Running...\n", .{});
+    log.debug("Running...\n", .{});
 
     var omino = try createOmino();
     defer omino.deinit();
-    std.debug.warn("{}\n", .{omino});
+    log.debug("{}\n", .{omino});
     var omino_str = try omino.toStr();
-    std.debug.warn("Omino:\n{s}\n", .{omino_str});
+    std.debug.print("Omino:\n{s}\n", .{omino_str});
     allocator.free(omino_str); // @@@ Does this guarantee all the memory was freed?
 
-    std.debug.warn("Finished\n", .{});
+    log.debug("Finished\n", .{});
 }
