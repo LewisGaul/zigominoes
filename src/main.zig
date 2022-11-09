@@ -1,8 +1,7 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 /// The chosen allocator for this project.
-const allocator = std.heap.page_allocator;
+const allocator: *std.mem.Allocator = std.testing.allocator;
 const log = std.log.scoped(.main);
 pub const log_level = .debug;
 
@@ -35,11 +34,11 @@ const Point = struct {
 
 /// A struct representing an unordered set of unique points.
 const PointSet = struct {
-    // @@@ Not sure whether an array hashmap is a good choice or not.
     hashMap: HashMap,
 
     const Self = @This();
 
+    // @@@ Not sure whether an array hashmap is a good choice or not.
     // Not storing the hash to allow direct mutations without needing to reindex.
     const HashMap = std.ArrayHashMap(Point, void, Point.hash, Point.eql, false);
     const Iterator = struct {
@@ -108,16 +107,10 @@ const PointSet = struct {
         return true;
     }
 
-    pub fn clone(self: Self) !Self {
-        return Self{ .hashMap = try self.hashMap.clone() };
-    }
-
-    pub fn lessThan(self: *Self, other: *Self) bool {
+    // @@@ Both sets must first be sorted to get a meaningful result (be
+    //     independent of insertion order).
+    pub fn lessThan(self: Self, other: Self) bool {
         if (self.count() != other.count()) return self.count() < other.count();
-
-        self.sort();
-        other.sort();
-
         for (self.hashMap.items()) |entry, i| {
             if (std.meta.eql(entry.key, other.hashMap.items()[i].key)) continue;
             return entry.key.lessThan(other.hashMap.items()[i].key);
@@ -125,11 +118,15 @@ const PointSet = struct {
         return false;
     }
 
+    pub fn clone(self: Self) !Self {
+        return Self{ .hashMap = try self.hashMap.clone() };
+    }
+
     pub fn iterator(self: *const Self) Iterator {
         return Iterator{ .hmIt = self.hashMap.iterator() };
     }
 
-    fn sort(self: *Self) void {
+    pub fn sort(self: *Self) void {
         const Entry = @TypeOf(self.hashMap).Entry;
         const inner = struct {
             pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
@@ -210,15 +207,17 @@ const Omino = struct {
         return self.points.eql(other.points);
     }
 
-    pub fn hash(self: Self) u64 {
+    pub fn hash(self: Self) u32 {
         std.debug.assert(@as(u16, self.size) * (@as(u16, self.size) + 1) <= 512);
         var buffer = [_]u8{0} ** 512;
         var writer = std.io.fixedBufferStream(&buffer).writer();
         writer.print("{}", .{self}) catch unreachable;
-        return std.hash_map.hashString(&buffer);
+        return std.array_hash_map.hashString(&buffer);
     }
 
-    pub fn lessThan(self: *Self, other: *Self) bool {
+    pub fn lessThan(self: Self, other: Self) bool {
+        // Relies on the underlying points sets being sorted, but this is done
+        // in canonicalisation.
         return self.points.lessThan(other.points);
     }
 
@@ -314,12 +313,13 @@ const Omino = struct {
     fn canonicalise(self: *Self) !void {
         const inner = struct {
             pub fn checkPoints(curPts: *PointSet, minPts: *PointSet) void {
-                if (curPts.lessThan(minPts)) {
-                    storePoints(curPts, minPts);
+                curPts.sort();
+                if (curPts.lessThan(minPts.*)) {
+                    storePoints(curPts.*, minPts);
                 }
             }
 
-            pub fn storePoints(fromPts: *PointSet, toPts: *PointSet) void {
+            pub fn storePoints(fromPts: PointSet, toPts: *PointSet) void {
                 var fromIt = fromPts.iterator();
                 var toIt = toPts.iterator();
                 var toPt = toIt.next();
@@ -331,6 +331,7 @@ const Omino = struct {
 
         // log.debug("Initial:\n{}\n", .{self});
         self.moveToCorner();
+        self.points.sort();
         // log.debug("Cornered:\n{}\n", .{self});
 
         var minPoints: PointSet = try self.points.clone();
@@ -409,12 +410,12 @@ const OminoSet = struct {
 
     const Self = @This();
 
-    const HashMap = std.HashMap(
+    const HashMap = std.ArrayHashMap(
         Omino,
         void,
         Omino.hash,
         Omino.eql,
-        std.hash_map.DefaultMaxLoadPercentage,
+        false,
     );
     const Iterator = struct {
         hmIt: HashMap.Iterator,
@@ -472,6 +473,16 @@ const OminoSet = struct {
             try self.put(try omino.cloneAddPoint(p.*));
         }
     }
+
+    pub fn sort(self: *Self) void {
+        const Entry = @TypeOf(self.hashMap).Entry;
+        const inner = struct {
+            pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
+                return lhs.key.lessThan(rhs.key);
+            }
+        };
+        std.sort.sort(Entry, self.hashMap.items(), {}, inner.lessThan);
+    }
 };
 
 /// The initial set of ominoes.
@@ -503,6 +514,7 @@ pub fn main() !void {
             try nextSet.addByOminoGrowth(om);
         }
         if (nextSet.ominoSize <= 5) {
+            nextSet.sort();
             std.debug.print("{}", .{nextSet});
         } else {
             std.debug.print("Found {d} {d}-ominoes\n", .{ nextSet.count(), nextSet.ominoSize });
