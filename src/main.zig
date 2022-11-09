@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// The chosen allocator for this project.
-const allocator: *std.mem.Allocator = std.testing.allocator;
+var allocator: *std.mem.Allocator = undefined;
 const log = std.log.scoped(.main);
 pub const log_level = .debug;
 
@@ -439,6 +439,10 @@ const OminoSet = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        var iter = self.iterator();
+        while (iter.next()) |om| {
+            om.deinit();
+        }
         self.hash_map.deinit();
         self.* = undefined;
     }
@@ -464,8 +468,12 @@ const OminoSet = struct {
         return self.hash_map.count();
     }
 
-    pub fn put(self: *Self, omino: Omino) !void {
-        try self.hash_map.put(omino, {});
+    pub fn put(self: *Self, omino: *Omino) !void {
+        if (self.contains(omino.*)) {
+            omino.deinit();
+        } else {
+            try self.hash_map.putNoClobber(omino.*, {});
+        }
     }
 
     pub fn iterator(self: *const Self) Iterator {
@@ -473,9 +481,12 @@ const OminoSet = struct {
     }
 
     pub fn addByOminoGrowth(self: *Self, omino: *Omino) !void {
-        var it = (try omino.getFreeNeighbours()).iterator();
+        var nbrs = try omino.getFreeNeighbours();
+        defer nbrs.deinit();
+        var it = nbrs.iterator();
         while (it.next()) |p| {
-            try self.put(try omino.cloneAddPoint(p.*));
+            var new_omino = try omino.cloneAddPoint(p.*);
+            try self.put(&new_omino);
         }
     }
 
@@ -492,9 +503,9 @@ const OminoSet = struct {
 
 /// The initial seed set of ominoes.
 fn initialOminoSet() !OminoSet {
-    const one_omino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
+    var one_omino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
     var omino_set = OminoSet.init(1);
-    try omino_set.put(one_omino);
+    try omino_set.put(&one_omino);
     return omino_set;
 }
 
@@ -506,6 +517,10 @@ fn testing() !void {
 /// Main.
 pub fn main() !void {
     log.debug("Running...", .{});
+
+    // Set up the allocator for this project.
+    var allocator_struct = std.heap.GeneralPurposeAllocator(.{}){};
+    allocator = &allocator_struct.allocator;
 
     var prev_set = try initialOminoSet();
     var next_set: @TypeOf(prev_set) = undefined;
@@ -527,10 +542,16 @@ pub fn main() !void {
         prev_set.deinit();
         prev_set = next_set;
         next_set = undefined;
+        // @@@ Currently only works up to size 8...
+        if (prev_set.omino_size == 8) break;
     }
     prev_set.deinit();
 
-    // try testing();
+    try testing();
+
+    log.debug("Checking for memory leaks...", .{});
+    const leaks: bool = allocator_struct.deinit();
+    if (leaks) return error.MemoryLeak;
 
     log.debug("Finished", .{});
 }
