@@ -68,7 +68,7 @@ const PointSet = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        var entries = self.hash_map.items();
+        const entries = self.hash_map.items();
         var point: Point = undefined;
 
         try writer.writeAll(@typeName(Self));
@@ -150,7 +150,7 @@ const Omino = struct {
 
     const Self = @This();
 
-    pub fn init(size: u5, points: []Point) !Self {
+    pub fn init(size: u5, points: []const Point) !Self {
         if (size == 0) return error.InvalidSize;
         if (points.len != size) return error.InvalidPoints;
 
@@ -216,7 +216,7 @@ const Omino = struct {
     pub fn hash(self: Self) u32 {
         std.debug.assert(@as(u16, self.size) * (@as(u16, self.size) + 1) <= 512);
         var buffer = [_]u8{0} ** 512;
-        var writer = std.io.fixedBufferStream(&buffer).writer();
+        const writer = std.io.fixedBufferStream(&buffer).writer();
         writer.print("{}", .{self}) catch unreachable;
         return std.array_hash_map.hashString(&buffer);
     }
@@ -364,7 +364,7 @@ const Omino = struct {
 
 test "omino creation" {
     // Setup.
-    var points = [_]Point{
+    const points = [_]Point{
         Point.init(0, 1),
         Point.init(2, 1),
         Point.init(2, 2),
@@ -492,7 +492,7 @@ const OminoSet = struct {
 
 /// The initial seed set of ominoes.
 fn initialOminoSet() !OminoSet {
-    var one_omino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
+    const one_omino = try Omino.init(1, &[_]Point{Point.init(0, 0)});
     var omino_set = OminoSet.init(1);
     try omino_set.put(one_omino);
     return omino_set;
