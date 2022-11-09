@@ -18,12 +18,12 @@ const Point = struct {
 
 /// The 'omino' struct.
 const Omino = struct {
-    size: u8,
+    size: u5,
     points: []Point,
 
     const Self = @This();
 
-    pub fn init(size: u8, points: []Point) !Self {
+    pub fn init(size: u5, points: []Point) !Self {
         if (size == 0) return error.InvalidSize;
         if (points.len != size) return error.InvalidPoints;
 
@@ -31,16 +31,19 @@ const Omino = struct {
             .size = size,
             .points = try allocator.alloc(Point, size),
         };
-        // Note: don't bother checking legitimacy of points.
-        // Ways they could be invalid/otherwise unconstrained:
-        //  - May not be joined up.
-        //  - May not be within the '<size>x<size>' grid.
-        // Do check for duplicate points, however.
+        // Note: list of points could be 'invalid' in the following ways:
+        //  1. Duplicate points
+        //       Handled immediately.
+        //  2. Points not be joined up
+        //       Caught in canonicalisation.
+        //  3. Points not be within the '<size>x<size>' grid
+        //       Doesn't matter - fixed in canonicalisation.
         for (points) |p, i| {
             if (self.hasPoint(p.x, p.y)) return error.DuplicatePoint;
-            // This does an implicit copy (reference?).
+            // This does an implicit copy (@@@ docs reference?).
             self.points[i] = p;
         }
+        try self.canonicalise();
         return self;
     }
 
@@ -50,7 +53,7 @@ const Omino = struct {
 
     pub fn toStr(self: Self) ![]const u8 {
         // TODO: Should use 'std.fmt' or 'std.mem'?
-        var bufLen = self.size * (self.size + 1) - 1;
+        var bufLen: u8 = self.size * (self.size + 1) - 1;
         var buf: []u8 = try allocator.alloc(u8, bufLen);
         var x: u8 = 0;
         var y: u8 = self.size - 1;
@@ -92,12 +95,111 @@ const Omino = struct {
         }
         return false;
     }
+
+    fn moveToCorner(self: Self) void {
+        var min_x: u8 = std.math.maxInt(u8);
+        var min_y: u8 = std.math.maxInt(u8);
+
+        for (self.points) |p| {
+            min_x = std.math.min(min_x, p.x);
+            min_y = std.math.min(min_y, p.y);
+        }
+        for (self.points) |*p| {
+            p.x -= min_x;
+            p.y -= min_y;
+        }
+    }
+
+    fn signatureValue(self: Self) u256 {
+        // @@@ In theory this could overflow for size > 8...
+        var result: u256 = 0;
+        for (self.points) |p| {
+            result += @as(u256, 1) << (p.x + p.y * self.size);
+        }
+        return result;
+    }
+
+    fn savePoints(self: Self, points: []Point) void {
+        for (self.points) |p, i| {
+            points[i] = p;
+        }
+    }
+
+    fn rotate(self: Self) void {
+        for (self.points) |p, i| {
+            self.points[i] = Point{ .x = self.size - p.y - 1, .y = p.x };
+        }
+        // std.debug.warn("Rotated:\n{s}\n", .{self.toStr()});
+        self.moveToCorner();
+    }
+
+    fn transpose(self: Self) void {
+        for (self.points) |p, i| {
+            self.points[i] = Point{ .x = p.y, .y = p.x };
+        }
+        // std.debug.warn("Transposed:\n{s}\n", .{self.toStr()});
+    }
+
+    fn canonicalise(self: Self) !void {
+        // @@@ Check joined.
+
+        // std.debug.warn("Initial:\n{s}\n", .{self.toStr()});
+        self.moveToCorner();
+        // std.debug.warn("Cornered:\n{s}\n", .{self.toStr()});
+
+        var points = try allocator.alloc(Point, self.size);
+        defer allocator.free(points);
+        var signature: u256 = self.signatureValue();
+        self.savePoints(points);
+
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.transpose();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+        self.rotate();
+        if (self.signatureValue() < signature) {
+            signature = self.signatureValue();
+            self.savePoints(points);
+        }
+
+        // @@@ This would be more efficient:
+        // var points = pointsFromSignature(signature);
+        for (points) |p, i| {
+            self.points[i] = p;
+        }
+    }
 };
 
 test "omino creation" {
     // Setup.
     var points = [_]Point{
-        Point.init(0, 0),
+        Point.init(0, 1),
         Point.init(2, 1),
         Point.init(2, 2),
     };
@@ -106,7 +208,8 @@ test "omino creation" {
 
     // Success.
     std.testing.expectEqual(@as(u8, 3), omino.size);
-    std.testing.expectEqualSlices(Point, &points, omino.points);
+    // @@@ Depends on the order, which is not currently well-defined.
+    std.testing.expectEqualSlices(Point, omino.points, &[_]Point{Point.init(2, 0), Point.init(0, 0), Point.init(0, 1)});
 
     // Errors.
     std.testing.expectError(error.InvalidSize, Omino.init(0, &[_]Point{}));
@@ -146,12 +249,13 @@ test "omino equality" {
 /// Returned omino should be freed by the caller.
 fn createOmino() !Omino {
     var points = [_]Point{
-        Point.init(0, 0),
-        Point.init(1, 0),
-        Point.init(1, 1),
-        Point.init(2, 1),
+        Point.init(2, 2),
+        Point.init(3, 1),
+        Point.init(4, 3),
+        Point.init(3, 3),
+        Point.init(3, 2),
     };
-    var omino = try Omino.init(4, &points);
+    var omino = try Omino.init(5, &points);
     return omino;
 }
 
