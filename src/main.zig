@@ -93,8 +93,8 @@ const PointSet = struct {
 
     pub fn eql(self: Self, other: Self) bool {
         if (self.count() != other.count()) return false;
-        for (self.hash_map.items()) |entry| {
-            if (!other.contains(entry.key)) return false;
+        for (self.hash_map.keys()) |key| {
+            if (!other.contains(key)) return false;
         }
         return true;
     }
@@ -368,12 +368,12 @@ test "omino creation" {
     defer omino.deinit();
 
     // Success.
-    std.testing.expectEqual(@as(u8, 3), omino.size);
+    try std.testing.expectEqual(@as(u8, 3), omino.size);
 
     // Errors.
-    std.testing.expectError(error.InvalidSize, Omino.init(0, &[_]Point{}));
-    std.testing.expectError(error.InvalidPoints, Omino.init(1, &[_]Point{}));
-    std.testing.expectError(error.DuplicatePoint, Omino.init(2, &[_]Point{ Point.init(0, 0), Point.init(0, 0) }));
+    try std.testing.expectError(error.InvalidSize, Omino.init(0, &[_]Point{}));
+    try std.testing.expectError(error.InvalidPoints, Omino.init(1, &[_]Point{}));
+    try std.testing.expectError(error.DuplicatePoint, Omino.init(2, &[_]Point{ Point.init(0, 0), Point.init(0, 0) }));
 }
 
 test "omino equality" {
@@ -394,14 +394,14 @@ test "omino equality" {
     defer omino4.deinit();
 
     // Equal to itself.
-    std.testing.expect(omino1.eql(omino1));
-    std.testing.expect(omino3.eql(omino3));
+    try std.testing.expect(omino1.eql(omino1));
+    try std.testing.expect(omino3.eql(omino3));
 
     // Not equal to another omino of different size.
-    std.testing.expect(!omino1.eql(omino3));
+    try std.testing.expect(!omino1.eql(omino3));
 
     // Not equal to another omino with different contents.
-    std.testing.expect(!omino1.eql(omino4));
+    try std.testing.expect(!omino1.eql(omino4));
 }
 
 /// A struct representing a set of unique ominoes.
