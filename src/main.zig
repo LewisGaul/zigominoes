@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// The chosen allocator for this project.
-var allocator: *std.mem.Allocator = undefined;
+var allocator: std.mem.Allocator = undefined;
 const log = std.log.scoped(.main);
 pub const log_level = .debug;
 
@@ -21,15 +21,6 @@ const Point = struct {
         if (self.x != other.x) return self.x < other.x;
         return false; // Equal
     }
-
-    pub fn eql(self: Self, other: Self) bool {
-        return self.x == other.x and self.y == other.y;
-    }
-
-    pub fn hash(self: Self) u32 {
-        // @@@ Not sure this is suitable...
-        return std.array_hash_map.getAutoHashFn(Self)(self);
-    }
 };
 
 /// A struct representing an unordered set of unique points.
@@ -40,12 +31,12 @@ const PointSet = struct {
 
     // @@@ Not sure whether an array hashmap is a good choice or not.
     // Not storing the hash to allow direct mutations without needing to reindex.
-    const HashMap = std.ArrayHashMap(Point, void, Point.hash, Point.eql, false);
+    const HashMap = std.AutoArrayHashMap(Point, void);
     const Iterator = struct {
         hm_iter: HashMap.Iterator,
 
         pub fn next(it: *Iterator) ?*Point {
-            return if (it.hm_iter.next()) |entry| &entry.key else null;
+            return if (it.hm_iter.next()) |entry| entry.key_ptr else null;
         }
 
         pub fn reset(it: *Iterator) void {
@@ -68,6 +59,8 @@ const PointSet = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         const entries = self.hash_map.items();
         var point: Point = undefined;
 
@@ -110,9 +103,9 @@ const PointSet = struct {
     //     independent of insertion order).
     pub fn lessThan(self: Self, other: Self) bool {
         if (self.count() != other.count()) return self.count() < other.count();
-        for (self.hash_map.items()) |entry, i| {
-            if (std.meta.eql(entry.key, other.hash_map.items()[i].key)) continue;
-            return entry.key.lessThan(other.hash_map.items()[i].key);
+        for (self.hash_map.keys()) |key, i| {
+            if (std.meta.eql(key, other.hash_map.keys()[i])) continue;
+            return key.lessThan(other.hash_map.keys()[i]);
         }
         return false;
     }
@@ -126,13 +119,12 @@ const PointSet = struct {
     }
 
     pub fn sort(self: *Self) void {
-        const Entry = @TypeOf(self.hash_map).Entry;
         const inner = struct {
-            pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
-                return lhs.key.lessThan(rhs.key);
+            pub fn lessThan(_: void, lhs: Point, rhs: Point) bool {
+                return lhs.lessThan(rhs);
             }
         };
-        std.sort.sort(Entry, self.hash_map.items(), {}, inner.lessThan);
+        std.sort.sort(Point, self.hash_map.keys(), {}, inner.lessThan);
     }
 };
 
@@ -166,7 +158,7 @@ const Omino = struct {
         //       Checked explicitly.
         //  3. Points not be within the '<size>x<size>' grid
         //       Doesn't matter - fixed in canonicalisation.
-        for (points) |p, i| {
+        for (points) |p| {
             if (self.points.contains(p)) return error.DuplicatePoint;
             try self.points.put(p);
         }
@@ -186,6 +178,8 @@ const Omino = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         var x: u8 = undefined;
         var y: u8 = self.size;
 
@@ -268,6 +262,7 @@ const Omino = struct {
     /// Check the points are joined up to form a viable omino.
     fn checkJoined(self: Self) !void {
         // @@@ Implement.
+        _ = self;
     }
 
     /// In-place move to bottom-left corner.
@@ -416,18 +411,12 @@ const OminoSet = struct {
 
     const Self = @This();
 
-    const HashMap = std.ArrayHashMap(
-        Omino,
-        void,
-        Omino.hash,
-        Omino.eql,
-        false,
-    );
+    const HashMap = std.AutoArrayHashMap(Omino, void);
     const Iterator = struct {
         hm_iter: HashMap.Iterator,
 
         pub fn next(it: *Iterator) ?*Omino {
-            return if (it.hm_iter.next()) |entry| &entry.key else null;
+            return if (it.hm_iter.next()) |entry| entry.key_ptr else null;
         }
     };
 
@@ -453,6 +442,8 @@ const OminoSet = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try writer.print("Set of {d} {d}-ominoes:\n", .{ self.hash_map.count(), self.omino_size });
         var it = self.iterator();
         while (it.next()) |om| {
@@ -491,13 +482,12 @@ const OminoSet = struct {
     }
 
     pub fn sort(self: *Self) void {
-        const Entry = @TypeOf(self.hash_map).Entry;
         const inner = struct {
-            pub fn lessThan(context: void, lhs: Entry, rhs: Entry) bool {
-                return lhs.key.lessThan(rhs.key);
+            pub fn lessThan(_: void, lhs: Omino, rhs: Omino) bool {
+                return lhs.lessThan(rhs);
             }
         };
-        std.sort.sort(Entry, self.hash_map.items(), {}, inner.lessThan);
+        std.sort.sort(Omino, self.hash_map.keys(), {}, inner.lessThan);
     }
 };
 
@@ -520,7 +510,7 @@ pub fn main() !void {
 
     // Set up the allocator for this project.
     var allocator_struct = std.heap.GeneralPurposeAllocator(.{}){};
-    allocator = &allocator_struct.allocator;
+    allocator = allocator_struct.allocator();
 
     var prev_set = try initialOminoSet();
     var next_set: @TypeOf(prev_set) = undefined;
